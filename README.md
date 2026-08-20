@@ -5,7 +5,17 @@ ESP32/ESPHome monitor for the SLN geothermal electric-resistance backup heat
 Senses the strip directly — independent of the ecobee — and reports to Home
 Assistant over the native API.
 
-**Status:** Design accepted (SLN ADR-013, 2026-06-15). Not yet built or flashed.
+**Status:** Board designed, milled, and populated — this was the first PCB cut
+on the Tormach 1100MX. Flashing/commissioning state not recorded here.
+
+The board is a **milled single-sided PCB**, not a fab-house order. Design files
+live in `sln-ha-config`, not this repo:
+
+- `sln-ha-config/electronics/kicad/sln-geo-aux-heat/sln-geo-aux-heat.kicad_sch`
+- `…/sln-geo-aux-heat.kicad_pcb` and `…/Gerbers/`
+
+The same gerbers are checked in as `pcbmill/tests/fixtures/` — this board is the
+regression fixture for the milling toolchain.
 
 ## Sensing architecture (three-level state machine)
 

@@ -1,5 +1,17 @@
 # BOM — geo-aux-heat-monitor
 
+> **This is the design-time BOM. It is not what got built.** The board has since
+> been cut and populated, and the as-built BOM is `../BOM.md`, extracted from
+> `sln-geo-aux-heat.kicad_sch`. Three differences matter:
+>
+> - The opto dropping resistors are **3.3 kΩ and 100 kΩ**, not the 10–15 kΩ
+>   guessed below.
+> - The **per-opto front-end bridges/diodes were never populated** — both optos
+>   run off the single rectified rail.
+> - The filter cap is **470 µF / 63 V**, not the 50 V minimum specified here.
+>
+> Kept for the decision history; do not order from this table.
+
 Derived from SLN ADR-013 "Revised BOM" (amendment 2026-06-15) plus amendment
 2026-06-15b, which upgraded channel C to a dual tap (STAGED + COMMANDED) —
 hence qty 2 on the opto front-end parts. The ADR's original single-opto line
