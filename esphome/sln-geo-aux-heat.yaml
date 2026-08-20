@@ -1,0 +1,186 @@
+substitutions:
+  device_name: sln-geo-aux-heat
+  friendly_name: SLN Geo Aux Heat
+
+# SLN geothermal electric-resistance backup monitor - mounted in the HVAC air
+# handler cabinet (NOT the electrical panel). See SLN ADR-013 + 2026-06-15 amendment.
+#
+# Strip: ClimateMaster Genesis AGL10A, 9.6 kW / 40A @ 240V, SINGLE-STAGE; contactor
+# = WILSPEC CT3XQ04CG, INFERRED strip contactor (coil = COMMANDED tap) -- CONFIRM it's
+# the heat (not compressor) contactor: coil->EHB, load->strip. Three levels (STAGED -> COMMANDED -> DRAWING):
+#   A  current switch (dry contact, OPTIONAL) -> GPIO25 -> no-cal on/off
+#   B  spare Emporia 50A CT (voltage-out, burden built-in) via ADC1 -> GPIO34 -> amps/kW (= I*240)
+#   COMMANDED  strip contactor coil, opto across coil -> GPIO26
+#   STAGED     EWC NCM-300 SYSTEM-block W2/E -> C (24VAC, white wire), opto -> GPIO27
+#              (board has a W2/E LED for visual confirm)
+#   DRAWING    template on B's amps (>5A)
+# Fault(contactor) = commanded & !drawing >60s  (dead contactor / open strip / breaker off)
+# Fault(control)   = staged & !commanded >120s  (unit control / relay never engaged)
+# Confirm contactor coil voltage on site (usually 24VAC; size opto front-end accordingly).
+#
+# HOST: ESP32-WROOM DevKit (board: esp32dev). NOT ESP8266 - the CT needs a
+# clean analog read and the '8266's single A0 is too noisy / gets consumed.
+# Channel A (current switch) is OPTIONAL now that B is a free reused Emporia CT;
+# on/off can instead be a template on B's amps. Keep A only for a no-cal trigger.
+# ADC1 only (GPIO32-39); ADC2 is unusable with WiFi on.
+#
+# LOCATION/POWER: ClimateMaster TSV048 electric-heat compartment (base panel).
+# The EWC NCM-300 zone panel is <=1.5m away / same box, so one ESP reaches the
+# strip leg (CT), the contactor coil (COMMANDED), 24VAC power, and the NCM-300
+# W/E (STAGED) with no CT-lead extension. Power the ESP from 24VAC: bridge
+# rectifier + filter cap + buck (input rating >=40V; 24VAC peaks ~34V) -> 5V into
+# VIN. No mains / no 5V conversion inside the electrical panel.
+# CT (B): clamp the strip power leg here. Vue Gen 3 CT leads are FERRULE-
+# terminated -> land in a 2-pos screw terminal (NOT a 2.5mm jack).
+#
+# STATUS: staged, NOT flashed. Pinout + inversions are a starting point to
+# verify on the bench. Calibration is a placeholder - do a real clamp-meter
+# calibrate_linear pass with the strip energized.
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${device_name} setup"
+    password: !secret fallback_ap_password
+
+captive_portal:
+
+sensor:
+  # B - reused Emporia 50A voltage-output CT (burden built-in), biased ~Vcc/2.
+  - platform: adc
+    pin: GPIO34
+    id: geo_ct_adc
+    attenuation: 12db
+    internal: true
+
+  - platform: ct_clamp
+    sensor: geo_ct_adc
+    id: geo_aux_current
+    name: "Geo Aux Heat Current"
+    unit_of_measurement: "A"
+    accuracy_decimals: 2
+    sample_duration: 500ms
+    update_interval: 10s
+    filters:
+      # PLACEHOLDER cal: Emporia CT mV/A unpublished (333mV-class). Calibrate
+      # empirically with a clamp meter; second point below is a rough seed.
+      - calibrate_linear:
+          - 0.0 -> 0.0
+          - 0.266 -> 40.0
+
+  - platform: template
+    name: "Geo Aux Heat Power"
+    id: geo_aux_power
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 10s
+    lambda: "return id(geo_aux_current).state * 240.0;"
+
+  - platform: total_daily_energy
+    name: "Geo Aux Heat Energy"
+    power_id: geo_aux_power
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+
+binary_sensor:
+  # A (OPTIONAL) - current switch: dry contact to GND, pullup, closed = LOW = on.
+  - platform: gpio
+    name: "Geo Aux Heat Running"
+    id: geo_aux_heat_running
+    device_class: heat
+    pin:
+      number: GPIO25
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    filters:
+      - delayed_on: 2s
+      - delayed_off: 10s
+
+  # COMMANDED - strip contactor coil via opto (pulls LOW when energized). GPIO26.
+  - platform: gpio
+    name: "Geo Aux Commanded"
+    id: geo_aux_commanded
+    device_class: running
+    pin:
+      number: GPIO26
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    filters:
+      - delayed_on: 1s
+      - delayed_off: 5s
+
+  # STAGED - NCM-300 W/E (W2) aux call via opto (pulls LOW when staged). GPIO27.
+  - platform: gpio
+    name: "Geo Aux Staged"
+    id: geo_aux_staged
+    device_class: running
+    pin:
+      number: GPIO27
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    filters:
+      - delayed_on: 1s
+      - delayed_off: 5s
+
+  # DRAWING - current actually flowing (from CT amps); independent of optional switch A.
+  - platform: template
+    name: "Geo Aux Drawing"
+    id: geo_aux_drawing
+    device_class: power
+    lambda: |-
+      return id(geo_aux_current).state > 5.0;
+    filters:
+      - delayed_on: 2s
+      - delayed_off: 10s
+
+  # FAULT 1 - commanded but no current: dead contactor / open strip / breaker off.
+  - platform: template
+    name: "Geo Aux Fault (Contactor)"
+    device_class: problem
+    lambda: |-
+      return id(geo_aux_commanded).state && !id(geo_aux_drawing).state;
+    filters:
+      - delayed_on: 60s
+      - delayed_off: 10s
+
+  # FAULT 2 - staged but contactor never engaged: unit control / relay fault.
+  - platform: template
+    name: "Geo Aux Fault (Control)"
+    device_class: problem
+    lambda: |-
+      return id(geo_aux_staged).state && !id(geo_aux_commanded).state;
+    filters:
+      - delayed_on: 120s
+      - delayed_off: 10s
