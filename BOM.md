@@ -13,7 +13,7 @@ Geothermal auxiliary-heat project. Already built - this record exists to claim t
 | 1 | Capacitor Electrolytic 10uF 25V (5x11) | `694` | A3-R8C4 |
 | 1 | Capacitor Electrolytic 220uF 16V (8x12) | `879` | no stock |
 | 1 | Capacitor Electrolytic 470uF 63V (13x21mm) | `672` | no stock |
-| 1 | MB10S Bridge Rectifier 1000V 0.5A SOP-4 SMD | `878` | no stock |
+| 1 | MB10S Bridge Rectifier 1000V 0.5A SOP-4 SMD | `878` | Kit - SMD Rectifier Bridge 8-value |
 | 1 | LM2596 Buck Module ADJ, Vin 3-40V | `28` | B3-R3C2 |
 | 1 | ESP32 ESP-32S ESP-WROOM-32 Dev Board 38-pin CP2012 USB-C | `58` | B3-R6C3 |
 | 2 | KF301 Screw Terminal Block 5.08mm, 2-position | `291` | A3-R8C7 |
