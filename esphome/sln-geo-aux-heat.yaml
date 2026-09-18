@@ -2,44 +2,86 @@ substitutions:
   device_name: sln-geo-aux-heat
   friendly_name: SLN Geo Aux Heat
 
-# SLN geothermal electric-resistance backup monitor - mounted in the HVAC air
-# handler cabinet (NOT the electrical panel). See SLN ADR-013 + 2026-06-15 amendment.
+# SLN geothermal electric-resistance backup monitor. Mounted in the ClimateMaster
+# TSV048 ELECTRIC-HEAT CABINET (not the electrical panel). See SLN ADR-013.
 #
-# Strip: ClimateMaster Genesis AGL10A, 9.6 kW / 40A @ 240V, SINGLE-STAGE; contactor
-# = WILSPEC CT3XQ04CG, INFERRED strip contactor (coil = COMMANDED tap) -- CONFIRM it's
-# the heat (not compressor) contactor: coil->EHB, load->strip. Three levels (STAGED -> COMMANDED -> DRAWING):
-#   A  current switch (dry contact, OPTIONAL) -> GPIO25 -> no-cal on/off
-#   B  spare Emporia 50A CT (voltage-out, burden built-in) via ADC1 -> GPIO34 -> amps/kW (= I*240)
-#   COMMANDED  strip contactor coil, opto across coil -> GPIO26
-#   STAGED     EWC NCM-300 SYSTEM-block W2/E -> C (24VAC, white wire), opto -> GPIO27
-#              (board has a W2/E LED for visual confirm)
-#   DRAWING    template on B's amps (>5A)
-# Fault(contactor) = commanded & !drawing >60s  (dead contactor / open strip / breaker off)
-# Fault(control)   = staged & !commanded >120s  (unit control / relay never engaged)
-# Confirm contactor coil voltage on site (usually 24VAC; size opto front-end accordingly).
+# ============================ ARCHITECTURE (settled 2026-07-08) ==============
+# Everything is derived from the ClimateMaster CXM manual (97B0003N12, Table 5 +
+# troubleshooting) and unit wiring diagram 96B0016N02 — NOT inferred.
 #
-# HOST: ESP32-WROOM DevKit (board: esp32dev). NOT ESP8266 - the CT needs a
-# clean analog read and the '8266's single A0 is too noisy / gets consumed.
-# Channel A (current switch) is OPTIONAL now that B is a free reused Emporia CT;
-# on/off can instead be a template on B's amps. Keep A only for a no-cal trigger.
-# ADC1 only (GPIO32-39); ADC2 is unusable with WiFi on.
+# CXM (17B0001N01) P3 connector, silk: [24V DC][blank][EH1][EH2]
+#   BLK = 24VDC  -> EHB "+V"   (supply rail to the electric heat module)
+#   WHT = EH1    -> EHB "W1"   (stage 1 electric heat output)
+#   RED = EH2    -> EHB "W2"   (stage 2 electric heat output)
+# EHB relay board = 17B0003N02 (4x TE T9AV1D22-22, 2 used). It is PASSIVE: each
+# relay coil sits between +V and its W line, so the W line IS the coil's return.
+# The EHB therefore has NO local DC common — by design.
 #
-# LOCATION/POWER: ClimateMaster TSV048 electric-heat compartment (base panel).
-# The EWC NCM-300 zone panel is <=1.5m away / same box, so one ESP reaches the
-# strip leg (CT), the contactor coil (COMMANDED), 24VAC power, and the NCM-300
-# W/E (STAGED) with no CT-lead extension. Power the ESP from 24VAC: bridge
-# rectifier + filter cap + buck (input rating >=40V; 24VAC peaks ~34V) -> 5V into
-# VIN. No mains / no 5V conversion inside the electrical panel.
-# CT (B): clamp the strip power leg here. Vue Gen 3 CT leads are FERRULE-
-# terminated -> land in a 2-pos screw terminal (NOT a 2.5mm jack).
+# ACTIVE-LOW, per ClimateMaster's own procedure ("measure from 24VDC terminal to
+# EH1 or EH2"): coil energizes when the CXM pulls that W line toward the DC
+# common. Verified on site: BLK->chassis +12V, WHT(energized)->chassis -10V, i.e.
+# BLK->WHT = ~22-24VDC across the coil. RED idle sat AT BLK potential = coil off.
+# NOTE: the 24VDC supply FLOATS vs chassis (self-biases ~+/-12V). Chassis is NOT
+# the DC common. Do not reference the optos to chassis.
 #
-# STATUS: staged, NOT flashed. Pinout + inversions are a starting point to
-# verify on the bench. Calibration is a placeholder - do a real clamp-meter
-# calibrate_linear pass with the strip energized.
+# CHANNELS:
+#   DRAWING     spare Emporia 50A CT (voltage-out, burden built-in) on a 240V
+#               element leg -> ADC1 GPIO34 -> amps -> W (=I*240). Stage-agnostic
+#               ground truth: "is electric heat actually consuming?"
+#   CMD W1      PC817 opto: anode -> BLK(24VDC), cathode -> 2.2-3.3k -> WHT(EH1)
+#               -> GPIO32 (pullup; LOW = commanded)   <-- rev1 board as-built
+#   CMD W2      PC817 opto: anode -> BLK(24VDC), cathode -> 2.2-3.3k -> RED(EH2)
+#               -> GPIO33 (pullup; LOW = commanded)   <-- rev1 board as-built
+#
+# !! REV-1 BOARD PIN ERRATUM (2026-08-10) !!
+# The rev-1 PCB wires the optos to GPIO32/GPIO33, NOT GPIO26/27. Cause: the
+# custom NodeMCU-32S symbol numbers pins 1-38 by physical POSITION while naming
+# them by GPIO, so symbol pin *number* 26 is the pin *named* P32 (P26 is pin
+# number 29). The schematic nets were attached by number, not by name.
+#   as-built:  CMD_W1_N -> pad 26 = P32   CMD_W2_N -> pad 27 = P33
+#              CT_ADC   -> pad 34 = P13  (GPIO13 = ADC2 -> UNUSABLE with WiFi)
+#   intended:  pads 29 (P26), 30 (P27), 24 (P34)
+# REWORK on rev 1: cut the CT_ADC trace at pad 34 and jumper CT_ADC to pad 24
+# (P34) so the CT lands on ADC1. Optos need no rework - firmware uses 32/33.
+# Rev 2 fixes the schematic to pads 29/30/24 and this file goes back to 26/27.
+# Both W lines are sensed so we don't care how the CXM/NCM-300 chooses to stage.
+# Optos are self-contained on the BLK/WHT/RED harness — they need no ground, and
+# they isolate the FLOATING DC control circuit from the AC-powered ESP domain.
+#
+# TAP: insulation-window T-splice on the BLK/WHT/RED harness in the heat cabinet.
+# Do NOT sever conductors. Opto draws ~8mA against a 42mA coil (T9A 24V coil =
+# 1W / 576ohm) — invisible to staging.
+#
+# POWER: R + C (24VAC) at the CXM low-voltage block -> MB10S bridge -> 470uF/63V
+# -> LM2596HVS buck set to 5.0V -> ESP32 VIN. C is a GROUNDED common (wiring-diagram
+# note 7: transformer secondary grounds via the CXM board standoffs/screws to the
+# control box). CXM draws 5-9VA of a 40VA transformer -> ample headroom for ~1VA.
+# Pull R + C up alongside the existing harness. A plain LM2596 (40V max) is NOT
+# safe here: 26-28VAC rectifies to ~38-40V peak.
+#
+# CXM BEHAVIOR THAT SHAPES THE LOGIC (manual 97B0003N12):
+#   - Heating Stage 2: EH1 on IMMEDIATELY; EH2 follows after 10 MINUTES.
+#   - Emergency Heat:  EH1 on IMMEDIATELY; EH2 follows after 5 MINUTES.
+#   - "G" must be active or "W" is IGNORED entirely.
+#   - EH2 is inhibited/dropped if LT1 > 45F AND LT2 > 110F.
+#   - DIP4 must be ON (= "EH2 Normal"). If OFF, EH2 becomes a DDC fault-code
+#     output and W2 here would be monitoring garbage. VERIFIED ON = 2026-07-08.
+# Because EH2 legitimately lags EH1 by 5-10 min, fault logic keys off ANY command
+# (W1 OR W2) — never off W2 alone.
+#
+# HOST: ESP32-WROOM DevKit (esp32dev). NOT an ESP32-C3/C6 and NOT an ESP8266 —
+# ADC1 (GPIO32-39) must stay free for the CT; ADC2 is unusable with WiFi on.
+#
+# STATUS: not yet flashed. Pin assignments + CT calibration are to verify on the
+# bench. Calibration below is a PLACEHOLDER — do a real clamp-meter
+# calibrate_linear pass with the elements energized.
+# ============================================================================
 
 esphome:
   name: ${device_name}
   friendly_name: ${friendly_name}
+  platformio_options:
+    board_build.flash_mode: dio
 
 esp32:
   board: esp32dev
@@ -65,8 +107,18 @@ wifi:
 
 captive_portal:
 
+time:
+  - platform: homeassistant
+
 sensor:
-  # B - reused Emporia 50A voltage-output CT (burden built-in), biased ~Vcc/2.
+  - platform: uptime
+    name: "Uptime"
+    id: geo_uptime
+    update_interval: 30s
+
+  # Raw ADC for the ct_clamp. Keep internal. To debug the CT front-end, set
+  # internal: false + add a name/update_interval — idle should read ~1.65 V
+  # (the R3/R4 bias). 2026-08-10: verified 1.65 V, front-end good.
   - platform: adc
     pin: GPIO34
     id: geo_ct_adc
@@ -82,8 +134,11 @@ sensor:
     sample_duration: 500ms
     update_interval: 10s
     filters:
-      # PLACEHOLDER cal: Emporia CT mV/A unpublished (333mV-class). Calibrate
-      # empirically with a clamp meter; second point below is a rough seed.
+      # VALIDATED 2026-08-10 on the SLN shop panel: measured Emporia 50A CT
+      # output = 6.93 mV/A (104 mV at 3600 W / 240 V = 15.0 A). This seed
+      # (0.266 -> 40 A = 6.65 mV/A) came out within 4%, and the board agreed
+      # with the shop Vue to within 60 W on a ~3600 W load (1.7%). Left as-is.
+      # Optional: trim in situ with the elements energized (AGL10A = 40 A).
       - calibrate_linear:
           - 0.0 -> 0.0
           - 0.266 -> 40.0
@@ -109,52 +164,49 @@ sensor:
       - multiply: 0.001
 
 binary_sensor:
-  # A (OPTIONAL) - current switch: dry contact to GND, pullup, closed = LOW = on.
+  # ---- COMMANDED W1 (EH1) — opto anode->BLK, cathode->R->WHT. LOW = commanded.
   - platform: gpio
-    name: "Geo Aux Heat Running"
-    id: geo_aux_heat_running
-    device_class: heat
+    name: "Geo Aux Commanded W1"
+    id: geo_aux_cmd_w1
+    device_class: running
     pin:
-      number: GPIO25
+      # rev-1 board: opto W1 lands on P32. See PIN ERRATUM in header.
+      number: GPIO32
       inverted: true
       mode:
         input: true
         pullup: true
     filters:
-      - delayed_on: 2s
-      - delayed_off: 10s
+      - delayed_on: 1s
+      - delayed_off: 5s
 
-  # COMMANDED - strip contactor coil via opto (pulls LOW when energized). GPIO26.
+  # ---- COMMANDED W2 (EH2) — opto anode->BLK, cathode->R->RED. LOW = commanded.
+  # Legitimately lags W1 by 10 min (Htg2) / 5 min (Em Heat). Not a fault.
   - platform: gpio
+    name: "Geo Aux Commanded W2"
+    id: geo_aux_cmd_w2
+    device_class: running
+    pin:
+      # rev-1 board: opto W2 lands on P33. See PIN ERRATUM in header.
+      number: GPIO33
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    filters:
+      - delayed_on: 1s
+      - delayed_off: 5s
+
+  # ---- ANY command (W1 OR W2). Fault logic keys off THIS, never W2 alone.
+  - platform: template
     name: "Geo Aux Commanded"
     id: geo_aux_commanded
     device_class: running
-    pin:
-      number: GPIO26
-      inverted: true
-      mode:
-        input: true
-        pullup: true
-    filters:
-      - delayed_on: 1s
-      - delayed_off: 5s
+    lambda: |-
+      return id(geo_aux_cmd_w1).state || id(geo_aux_cmd_w2).state;
 
-  # STAGED - NCM-300 W/E (W2) aux call via opto (pulls LOW when staged). GPIO27.
-  - platform: gpio
-    name: "Geo Aux Staged"
-    id: geo_aux_staged
-    device_class: running
-    pin:
-      number: GPIO27
-      inverted: true
-      mode:
-        input: true
-        pullup: true
-    filters:
-      - delayed_on: 1s
-      - delayed_off: 5s
-
-  # DRAWING - current actually flowing (from CT amps); independent of optional switch A.
+  # ---- DRAWING — real current on an element leg. Ground truth.
+  # AGL10A full load = 40A; a single stage is well above 5A.
   - platform: template
     name: "Geo Aux Drawing"
     id: geo_aux_drawing
@@ -165,9 +217,10 @@ binary_sensor:
       - delayed_on: 2s
       - delayed_off: 10s
 
-  # FAULT 1 - commanded but no current: dead contactor / open strip / breaker off.
+  # ---- FAULT: commanded but not drawing -> open element / tripped heater
+  # breaker / failed EHB relay. THE "call for service" alert.
   - platform: template
-    name: "Geo Aux Fault (Contactor)"
+    name: "Geo Aux Fault (Commanded Not Drawing)"
     device_class: problem
     lambda: |-
       return id(geo_aux_commanded).state && !id(geo_aux_drawing).state;
@@ -175,12 +228,13 @@ binary_sensor:
       - delayed_on: 60s
       - delayed_off: 10s
 
-  # FAULT 2 - staged but contactor never engaged: unit control / relay fault.
+  # ---- FAULT: drawing but NOT commanded -> welded/stuck relay energizing
+  # elements. Cost leak AND a safety flag.
   - platform: template
-    name: "Geo Aux Fault (Control)"
+    name: "Geo Aux Fault (Drawing Not Commanded)"
     device_class: problem
     lambda: |-
-      return id(geo_aux_staged).state && !id(geo_aux_commanded).state;
+      return id(geo_aux_drawing).state && !id(geo_aux_commanded).state;
     filters:
-      - delayed_on: 120s
+      - delayed_on: 60s
       - delayed_off: 10s
