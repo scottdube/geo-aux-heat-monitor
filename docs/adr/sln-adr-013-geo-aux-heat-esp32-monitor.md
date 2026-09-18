@@ -444,7 +444,16 @@ flying lead. W5500 wins on wire count alone.
 
 **Open:** not chosen yet. The competing option is an AP in the mechanical room —
 but that should be justified on its own merits (phone coverage while working on
-equipment down there, future wireless sensors), not charged to this project. If
-an AP is bought, buy a **U6-Lite** to match the existing fleet, not a nanoHD:
-nanoHD is Wi-Fi 5 and discontinued, and its 4x4 5 GHz is irrelevant to a 2.4 GHz
-1x1 ESP32.
+equipment down there, future wireless sensors), not charged to this project.
+
+**If an AP is bought, the nanoHD at ~$62 is the right one** — corrected
+2026-09-18 after checking live prices. The earlier "buy a U6-Lite to match the
+fleet" line here was wrong on both counts: **the U6 Lite is delisted** (U6 Pro
+sold out, the U6 line is winding down), and the nearest current equivalent is
+the **U7 Lite at $99** (verified at store.ui.com 2026-09-18), not less than the
+nanoHD. Fleet consistency was worth having when it looked free; it is not worth
+$37 on a utility AP whose only permanent client is a 2.4 GHz 1x1 ESP32. The
+nanoHD's real drawbacks stand — Wi-Fi 5, discontinued, oldest radio on the
+network and first in line for a support drop — they just do not cost $37 here.
+If the $62 unit is used rather than new-old-stock, factory-reset before
+adoption.
